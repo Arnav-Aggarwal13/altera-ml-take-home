@@ -1,0 +1,2 @@
+1. 
+2. I don't contrastive decoding is used in practice primarily because contrastive decoding takes sibstantially more time than normal decoding practices because for each token, two forward passes need to get done, 

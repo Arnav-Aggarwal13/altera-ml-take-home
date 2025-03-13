@@ -55,17 +55,19 @@ if torch.cuda.is_available():
 
 
 		
-def get_next_token_probs(model, prompt):
+def get_next_token_probs(model, prompt, temp=1):
     """Computes the probability distribution over the next token."""
 
     input_tensor = tokenizer(prompt, return_tensors="pt")
     input_tensor = input_tensor['input_ids'].to(model.device)
 
     with torch.no_grad():
-        outputs = model(input_tensor)
+        outputs = model(input_tensor, tem)
 
     # Get logits for the last token position
     logits = outputs.logits[:, -1, :]  # Shape: (1, vocab_size)
+    logits = logits / temp
+
 
     # Convert logits to log probabilities
     probs = F.softmax(logits, dim=-1)
@@ -76,13 +78,14 @@ def get_next_token_probs(model, prompt):
     
 
 
-def contrastive_generation(amateur, expert, prompt, max_tokens, tokenizer, sampling_strategy='topk', k=5):
+def contrastive_generation(amateur, expert, prompt, max_tokens, tokenizer, k=5, context_length=None):
     
   generated_tokens = tokenizer(prompt, return_tensors="pt")["input_ids"].tolist()[0]
 
   for i in range(max_tokens):
     current_text = tokenizer.decode(generated_tokens, skip_special_tokens=True)
-    amateur_probs = get_next_token_probs(amateur, current_text)
+    amt_txt = current_text[-context_length:] if context_length is not None else current_text
+    amateur_probs = get_next_token_probs(amateur, amt_txt, temp=0.5)
     expert_probs = get_next_token_probs(expert, current_text)
     max_prob_expert = np.max(expert_probs)
     cd_obj = np.zeros_like(amateur_probs)
