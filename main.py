@@ -45,10 +45,15 @@ prompt = tokenizer.apply_chat_template(
 amateur_model = tr.AutoModelForCausalLM.from_pretrained(amateur_path)
 expert_model = tr.AutoModelForCausalLM.from_pretrained(expert_path)
 
+if torch.cuda.is_available():
+	amateur_model = amateur_model.cuda()
+	expert_model = expert_model.cuda()
+	print('models moved to GPU')
 
-def get_next_token_probs(model, input_ids):
+def get_next_token_probs(model, prompt):
     """Computes the probability distribution over the next token."""
-    input_tensor = torch.tensor([input_ids]).to(model.device)
+
+    input_tensor = tokenizer(prompt, return_tensors="pt").to(model.device)
 
     with torch.no_grad():
         outputs = model(input_tensor)
@@ -65,7 +70,7 @@ def get_next_token_probs(model, input_ids):
     
 
 
-def contrastive_generation(amateur, expert, prompt, max_tokens, sampling_strategy='topk', k=5):
+def contrastive_generation(amateur, expert, prompt, max_tokens, tokenizer, sampling_strategy='topk', k=5):
     # general approach
     # 1. generate amateur response
 	# 2. generate expert response
@@ -76,10 +81,13 @@ def contrastive_generation(amateur, expert, prompt, max_tokens, sampling_strateg
     # 6. based on this choose top k tokens
     # 7. sample from this k tokens, and repeat 
     
-	updated_prompt = prompt
+	generated_tokens = tokenizer(prompt, return_tensors="pt")["input_ids"].tolist()[0]
+
 	for i in range(max_tokens):
-		amateur_probs = get_next_token_probs(amateur, updated_prompt)
-		expert_probs = get_next_token_probs(expert, updated_prompt)
+		current_text = tokenizer.decode(generated_tokens, skip_special_tokens=True)
+
+		amateur_probs = get_next_token_probs(amateur, current_text)
+		expert_probs = get_next_token_probs(expert, current_text)
         max_prob_expert = np.max(expert_probs)
 		cd_obj = np.zeros_like(amateur_probs)
 		for i, (exp_val, amt_val) in enumerate(zip(expert_probs, amateur_probs)):
@@ -87,6 +95,17 @@ def contrastive_generation(amateur, expert, prompt, max_tokens, sampling_strateg
 				cd_obj[i] = np.log(exp_val) - np.log(amt_val)
 			else:
 				cd_obj[i] = float('-inf')
+		top_k_indices = np.argsort(cd_obj)[-k:]  # Get indices of top-k highest probability tokens
+		raw_cd_obj = np.exp(cd_obj)
+		top_k_probs = {idx: raw_cd_obj[idx] for idx in top_k_indices}
+		# Sample from the top-k tokens
+		sampled_token = np.random.choice(top_k_indices, p=top_k_probs)
+		generated_tokens.append(sampled_token)
+		if sampled_token == tokenizer.eos_token_id:
+			break
+	return tokenizer.decode(generated_tokens, skip_special_tokens=True)
+
+		
 		
 
 				
