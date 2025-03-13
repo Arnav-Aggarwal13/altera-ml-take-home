@@ -62,7 +62,7 @@ def get_next_token_probs(model, prompt, temp=1):
     input_tensor = input_tensor['input_ids'].to(model.device)
 
     with torch.no_grad():
-        outputs = model(input_tensor, tem)
+        outputs = model(input_tensor)
 
     # Get logits for the last token position
     logits = outputs.logits[:, -1, :]  # Shape: (1, vocab_size)
