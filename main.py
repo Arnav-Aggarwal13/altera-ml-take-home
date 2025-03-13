@@ -2,6 +2,8 @@ import transformers as tr
 import torch
 import torch.nn.functional as F
 import numpy as np
+from scipy.special import softmax
+
 
 
 amateur_path = "Qwen/Qwen2.5-Coder-0.5B-Instruct"
@@ -50,10 +52,14 @@ if torch.cuda.is_available():
 	expert_model = expert_model.cuda()
 	print('models moved to GPU')
 
+
+
+		
 def get_next_token_probs(model, prompt):
     """Computes the probability distribution over the next token."""
 
-    input_tensor = tokenizer(prompt, return_tensors="pt").to(model.device)
+    input_tensor = tokenizer(prompt, return_tensors="pt")
+    input_tensor = input_tensor['input_ids'].to(model.device)
 
     with torch.no_grad():
         outputs = model(input_tensor)
@@ -71,47 +77,36 @@ def get_next_token_probs(model, prompt):
 
 
 def contrastive_generation(amateur, expert, prompt, max_tokens, tokenizer, sampling_strategy='topk', k=5):
-    # general approach
-    # 1. generate amateur response
-	# 2. generate expert response
-    # 3. grab amateur logits, and exper lofits
-    # 4. use plausibility constraint to filter our implausible tokens 
-    # 4. use log_softmax to obtain log prob of each
-	# 5. calculate contrastive loss
-    # 6. based on this choose top k tokens
-    # 7. sample from this k tokens, and repeat 
     
-	generated_tokens = tokenizer(prompt, return_tensors="pt")["input_ids"].tolist()[0]
+  generated_tokens = tokenizer(prompt, return_tensors="pt")["input_ids"].tolist()[0]
 
-	for i in range(max_tokens):
-		current_text = tokenizer.decode(generated_tokens, skip_special_tokens=True)
+  for i in range(max_tokens):
+    current_text = tokenizer.decode(generated_tokens, skip_special_tokens=True)
+    amateur_probs = get_next_token_probs(amateur, current_text)
+    expert_probs = get_next_token_probs(expert, current_text)
+    max_prob_expert = np.max(expert_probs)
+    cd_obj = np.zeros_like(amateur_probs)
+    for i, (exp_val, amt_val) in enumerate(zip(expert_probs, amateur_probs)):
+      if exp_val >= (alpha * max_prob_expert):
+        cd_obj[i] = np.log(exp_val) - np.log(amt_val)
+      else:
+        cd_obj[i] = float('-inf')
+    top_k_indices = np.argsort(cd_obj)[-k:]  # Get indices of top-k highest probability tokens
+    raw_cd_obj = np.exp(cd_obj)
+    top_k_probs = {idx: np.log(raw_cd_obj[idx]) for idx in top_k_indices}
+    # Sample from the tok-k tokens
 
-		amateur_probs = get_next_token_probs(amateur, current_text)
-		expert_probs = get_next_token_probs(expert, current_text)
-        max_prob_expert = np.max(expert_probs)
-		cd_obj = np.zeros_like(amateur_probs)
-		for i, (exp_val, amt_val) in enumerate(zip(expert_probs, amateur_probs)):
-			if exp_val >= (alpha * max_prob_expert):
-				cd_obj[i] = np.log(exp_val) - np.log(amt_val)
-			else:
-				cd_obj[i] = float('-inf')
-		top_k_indices = np.argsort(cd_obj)[-k:]  # Get indices of top-k highest probability tokens
-		raw_cd_obj = np.exp(cd_obj)
-		top_k_probs = {idx: raw_cd_obj[idx] for idx in top_k_indices}
-		# Sample from the top-k tokens
-		sampled_token = np.random.choice(top_k_indices, p=top_k_probs)
-		generated_tokens.append(sampled_token)
-		if sampled_token == tokenizer.eos_token_id:
-			break
-	return tokenizer.decode(generated_tokens, skip_special_tokens=True)
+    # top_k_probs = {idx: top_k_probs[idx] / np.sum(list(top_k_probs.values())) for idx in top_k_probs}
+    # print(sum(top_k_probs.values()))
+    probs_array = np.array(list(top_k_probs.values()))  
+    normed = softmax(probs_array)
 
-		
-		
-
-				
-		
+    sampled_token = np.random.choice(list(top_k_probs.keys()), p=normed)
+    generated_tokens.append(sampled_token)
+    if tokenizer.eos_token_id in generated_tokens:
+      break
+  return tokenizer.decode(generated_tokens, skip_special_tokens=True)
 
 
-    
-    
-    
+
+contrastive_generation(amateur_model, expert_model, user_message, 50, tokenizer)
